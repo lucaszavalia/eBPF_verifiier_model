@@ -1,8 +1,10 @@
 module Main where
 
 import System.IO
+import Data.List
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
+{-import qualified Data.ByteString.Char8 as BSC-}
 import qualified Data.Elf as ELF
 import qualified Data.Word as DW
 import qualified Data.Binary.Get as BG
@@ -13,19 +15,21 @@ main = putStrLn "Welcome to the EBPF verifier model!" >>
    putStrLn "Name of EBPF Object File: " >>
    getLine >>= (\filename ->
       BS.readFile filename >>= (\file ->
-         putStrLn 
+         (\x -> writeFile "./results/output.txt" x) 
          $ show
+         {-$ filterInstructions-}
          $ parseInstructions
          $ mapSection64
-         $ ELF.elfSections 
          $ ELF.parseElf file
       )
    )
    where
-      parseInstructions :: [(String, [DW.Word64])] -> [(String, [Maybe InstructionClass])]
-      parseInstructions = (\x -> fmap (\(a,b) -> (a, fmap parseEBPF b)) x)
-      mapSection64 :: [ELF.ElfSection] -> [(String, [DW.Word64])]
-      mapSection64 = (\x -> fmap (\y -> (getName y, getSection64 y)) x)
+      filterInstructions :: [(String, ELF.ElfMachine, [EBPFinstruction])] -> [(String, ELF.ElfMachine, [EBPFinstruction])]
+      filterInstructions = (\c -> filter (\(x,y,z) -> if ".text" `isInfixOf` x then True else False) c)
+      parseInstructions :: [(String, ELF.ElfMachine, [DW.Word64])] -> [(String, ELF.ElfMachine, [EBPFinstruction])]
+      parseInstructions = (\x -> fmap (\(a,b,c) -> (a, b, fmap parseEBPF c)) x)
+      mapSection64 :: ELF.Elf -> [(String, ELF.ElfMachine, [DW.Word64])]
+      mapSection64 = (\x -> fmap (\y -> (getName y, ELF.elfMachine x, getSection64 y)) (ELF.elfSections x))
       getSection64 :: ELF.ElfSection -> [DW.Word64]
       getSection64 = (\x -> splitBytes $ BS.unpack $ ELF.elfSectionData x)
       getName :: ELF.ElfSection -> String

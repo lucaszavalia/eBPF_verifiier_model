@@ -37,3 +37,7 @@ regionContextUpdate = if searchRegionContextStructure /= Nothing
    testRegionContextStructure = \(w, x, y, z) n -> n <= x && y <= n
    unJust :: Maybe a -> a
    unJust = (\Just x -> x)
+
+
+
+

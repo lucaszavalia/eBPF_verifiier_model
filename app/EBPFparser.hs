@@ -15,7 +15,7 @@ data InstructionClass = BPF_LD
                    | BPF_ALU64
                    deriving (Show, Eq)
 
-data ACode = BPF_ADD
+data AJCode = BPF_ADD
           | BPF_SUB
           | BPF_MUL
           | BPF_DIV
@@ -29,9 +29,7 @@ data ACode = BPF_ADD
           | BPF_MOV
           | BPF_ARSH
           | BPF_END
-          deriving (Show, Eq)
-
-data JCode = BPF_JA
+          | BPF_JA
           | BPF_JEQ
           | BPF_JGT
           | BPF_JGE
@@ -46,8 +44,6 @@ data JCode = BPF_JA
           | BPF_JSLT
           | BPF_JSLE
           deriving (Show, Eq) 
-
-data AJCode = ACode | JCode deriving (Show, Eq)
 
 data SourceModifier = BPF_K
                   | BPF_X
@@ -67,25 +63,47 @@ data ModeModifier = BPF_IMM
                deriving (Show, Eq)
 
 data Opcode = ArithmeticJumpOpcode { -- 3 bits, 1 bit, 4 bits
-                 iclass :: InstructionClass,
-                 source :: SourceModifier,
-                 code :: AJCode
+                 iclass :: Maybe InstructionClass,
+                 source :: Maybe SourceModifier,
+                 code :: Maybe AJCode
               } |
               LoadStoreOpcode { -- 3 bits, 2 bits, 3 bits
-                 iClass :: InstructionClass, 
-                 size :: SizeModifier, 
-                 mode :: ModeModifier
-              } deriving (Show, Eq)
+                 iClass :: Maybe InstructionClass, 
+                 size :: Maybe SizeModifier, 
+                 mode :: Maybe ModeModifier
+              } deriving (Eq)
+
+instance Show Opcode where
+   show (ArithmeticJumpOpcode ic so co) = "Arithmetic/Jump Opcode {\n"
+                                        ++ "\tInstruction Class: " ++ (show ic) ++ "\n"
+                                        ++ "\tSource Modifier: " ++ (show so) ++ "\n"
+                                        ++ "\tOperation: " ++ (show co) ++ "\n"
+                                        ++ "}\n"
+   show (LoadStoreOpcode ic si mo) = "Load/Store Opcode {\n"
+                                   ++ "\tInstruction Class: " ++ (show ic) ++ "\n"
+                                   ++ "\tSize Modifier: " ++ (show si) ++ "\n"
+                                   ++ "\tMode Modifier: " ++ (show mo) ++ "\n"
+                                   ++ "}\n"
 
 data Register = R0 | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 deriving (Show, Eq)
 
 data EBPFinstruction = EBPFinstruction {
-                         opcode :: Opcode,
-                         src :: Register,
-                         dest :: Register,
-                         offset :: Int,
-                         immediate :: Int
-                       } deriving (Show, Eq)
+                         opcode :: Maybe Opcode,
+                         dest :: Maybe Register,
+                         src :: Maybe Register,
+                         offset :: Integer,
+                         immediate :: Integer
+                       } deriving (Eq)
+
+instance Show EBPFinstruction where
+   show (EBPFinstruction op de sr os im) = "EBPF Instruction:\n"
+                                           ++ (show op)
+                                           ++ "Additional Data {\n"
+                                           ++ "\tDestination Register: " ++ (show sr) ++ "\n"
+                                           ++ "\tSource Register: " ++ (show de) ++ "\n"
+                                           ++ "\tOffset: " ++ (show os) ++ "\n"
+                                           ++ "\tImmediate: " ++ (show im) ++ "\n"
+                                           ++ "}\n\n"
 
 
 classHexMap = [ (0x00, BPF_LD)
@@ -98,8 +116,14 @@ classHexMap = [ (0x00, BPF_LD)
     , (0x07, BPF_ALU64)
     ]
 
+loadClass = [BPF_LD, BPF_LDX]
+storeClass = [BPF_ST, BPF_STX]
+arithmeticClass = [BPF_ALU, BPF_ALU64]
+jumpClass = [BPF_JMP, BPF_JMP32]
+
 sourceHexMap = [(0x00, BPF_K), (0x08, BPF_X)]
 
+arithmeticHexMap :: [(Word64, AJCode)]
 arithmeticHexMap =
     [ (0x00, BPF_ADD)
     , (0x10, BPF_SUB)
@@ -117,6 +141,7 @@ arithmeticHexMap =
     , (0xd0, BPF_END)
     ]
 
+jumpHexMap :: [(Word64, AJCode)]
 jumpHexMap =
     [ (0x00, BPF_JA)
     , (0x10, BPF_JEQ)
@@ -149,28 +174,75 @@ modeHexMap =
     , (0xc0, BPF_ATOMIC)
     ]
 
-parseEBPF :: Word64 -> Maybe InstructionClass
-parseEBPF inst = getClass inst  
+registerHexMap =
+    [ (0x00, R0)
+    , (0x01, R1)
+    , (0x02, R2)
+    , (0x03, R3)
+    , (0x04, R4)
+    , (0x05, R5)
+    , (0x06, R6)
+    , (0x07, R7)
+    , (0x08, R8)
+    , (0x09, R9)
+    , (0x0a, R10)
+    ]
+
+parseEBPF :: Word64 -> EBPFinstruction
+parseEBPF inst = EBPFinstruction (getOpcode inst) (getDest inst) (getSrc inst) (getOffset inst) (getImmediate inst)
    where
+      getOpcode :: Word64 -> Maybe Opcode
+      getOpcode n0
+         | (isLoad $ getClass n0) == True          = Just $ LoadStoreOpcode (getClass n0) (getSize n0) (getMode n0)
+         | (isStore $ getClass n0) == True         = Just $ LoadStoreOpcode (getClass n0) (getSize n0) (getMode n0)
+         | (isJump $ getClass n0) == True          = Just $ ArithmeticJumpOpcode (getClass n0) (getSourceModifier n0) (getJCode n0)
+         | (isArithmetic $ getClass n0) == True    = Just $ ArithmeticJumpOpcode (getClass n0) (getSourceModifier n0) (getACode n0)
+         | otherwise                               = Nothing
       getClass :: Word64 -> Maybe InstructionClass
       getClass = (\x -> (lookup ((.&.) x classBitmask) classHexMap))
+      getSourceModifier :: Word64 -> Maybe SourceModifier
+      getSourceModifier = (\x -> (lookup ((.&.) x sourceBitmask) sourceHexMap))
+      getACode :: Word64 -> Maybe AJCode
+      getACode = (\x -> (lookup ((.&.) x opBitmask) arithmeticHexMap))
+      getJCode :: Word64 -> Maybe AJCode
+      getJCode = (\x -> (lookup ((.&.) x opBitmask) jumpHexMap))
+      getSize :: Word64 -> Maybe SizeModifier
+      getSize = (\x -> (lookup ((.&.) x sizeBitmask) sizeHexMap))
+      getMode :: Word64 -> Maybe ModeModifier
+      getMode = (\x -> (lookup ((.&.) x modeBitmask) modeHexMap))
+      getDest :: Word64 -> Maybe Register
+      getDest = (\x -> (lookup (((.&.) x destBitmask) `shiftR` 8) registerHexMap))
+      getSrc :: Word64 -> Maybe Register
+      getSrc = (\x -> (lookup (((.&.) x srcBitmask) `shiftR` 12) registerHexMap))
+      getOffset :: Word64 -> Integer
+      getOffset = (\x -> toInteger $ ((.&.) x offsetBitmask) `shiftR` 16)
+      getImmediate :: Word64 -> Integer
+      getImmediate = (\x -> toInteger $ ((.&.) x immediateBitmask) `shiftR` 32)
+      isLoad :: Maybe InstructionClass -> Bool
+      isLoad = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` loadClass else False)
+      isStore :: Maybe InstructionClass -> Bool
+      isStore = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` storeClass else False)
+      isJump :: Maybe InstructionClass -> Bool
+      isJump = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` jumpClass else False)
+      isArithmetic :: Maybe InstructionClass -> Bool
+      isArithmetic = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` arithmeticClass else False)
       classBitmask :: Word64
       classBitmask = 0x07
-      {-sourceBitmask ::Word64
+      sourceBitmask :: Word64
       sourceBitmask = 0x1 `shiftL` 3
-      jocodeBitmask :: Word64
-      jocodeBitmask = 0xF `shiftL` 4
+      opBitmask :: Word64
+      opBitmask = 0xF `shiftL` 4
       sizeBitmask :: Word64
       sizeBitmask = 0x4 `shiftL` 3
       modeBitmask :: Word64
       modeBitmask = 0x7 `shiftL` 5
       destBitmask :: Word64
-      destBitmask = 0x7 `shiftL` 8
+      destBitmask = 0xF `shiftL` 8
       srcBitmask :: Word64
-      srcBitmask = 0x7 `shiftL` 12
+      srcBitmask = 0xF `shiftL` 12
       offsetBitmask :: Word64
       offsetBitmask = 0xFF `shiftL` 16
       immediateBitmask :: Word64
-      immediateBitmask = 0xFFFF `shiftL` 32-}
+      immediateBitmask = 0xFFFF `shiftL` 32
 
       
