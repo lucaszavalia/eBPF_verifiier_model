@@ -15,29 +15,57 @@ data EBPFbasic = Word8 | Word16 | Word32 | Word64 deriving (Eq, Show)
 data RegionType = StackType | PacketType | SharedType | ContextType deriving(Eq, Show)
 
 --Contexts
-type TypeContext = [(String, EBPFtype)]
-type RegionStructure = [(String, EBPFtype, (Int, Int))]
-type RegionContextStructure = (EBPFregion, Int, Int, RegionStructure)
-type RegionContext = [RegionContextStructure]
+type Name = String
+type Cell = (Name, EBPFtype)
+type TypeContext = [Cell]
+type Triplet = (Name, EBPFtype, Int)
+type RegionStructure = [Triplet]
+type Region = (RegionType, Int, Int, RegionStructure)
+type RegionContext = [Region]
 
-typeContextUpdate :: String -> EBPFtype -> TypeContext -> TypeContext
-typeContextUpdate = \nam typ con -> (nam,typ):con
+instance Eq Cell where
+   (==) x y = (fst x == fst y) && (snd x == snd y)
+
+instance Eq Triplet where
+   (==) x y = (get1 x == get1 y) && (get2 x == get2 y) && (get3 x == get3 y)
+   where
+      get1 = (\(a,b,c)->a)
+      get2 = (\(a,b,c)->b)
+      get3 = (\(a,b,c)->c)
+
+instance Eq Region where
+   (==) x y = (get1 x == get1 y) && (get2 x == get2 y) && (get3 x == get3 y)
+   where
+      get1 = (\(a,b,c)->a)
+      get2 = (\(a,b,c)->b)
+      get3 = (\(a,b,c)->c)
+
+
+typeContextUpdate :: Name -> EBPFtype -> TypeContext -> TypeContext
+typeContextUpdate na ty tc
+   | na `elem` fmap fst tc && ty `elem` fmap snd tc      = tc
+   | na `elem` fmap fst tc && ty `notElem` fmap snd tc   = (na, ty):(removeName na tc)
+   | otherwise                                           = (na, ty):tc
+   where
+      removeName :: Name -> TypeContext -> TypeContext
+      removeName _ [] = []
+      removeName na' ((n,t):tc')
+         | na' == n  = removeName tc'
+         | otherwise = (n,t):(removeName tc')
 
 typeContextUnion :: TypeContext -> TypeContext -> TypeContext
 typeContextUnion = \tc1 tc2 -> tc1 `union` tc2
 
-regionContextUpdate :: EBPFtype -> Int -> RegionContext -> RegionContext
-regionContextUpdate = if searchRegionContextStructure /= Nothing  
-   where
-   findRegionContext :: RegionContext -> Int -> Maybe RegionContextStructure
-   findRegionContext = \x n -> 
-   searchRegionContext :: RegionContext -> Int -> Bool
-   searchRegionContext = \x n -> fmap (\y -> testRegionStructure y n) x
-   testRegionContextStructure :: RegionContextStructure -> Int -> Bool
-   testRegionContextStructure = \(w, x, y, z) n -> n <= x && y <= n
-   unJust :: Maybe a -> a
-   unJust = (\Just x -> x)
+weight :: EBPFtype -> Integer
+weight (Word8 x) = 1
+weight (Word16 x) = 2
+weight (Word32 x) = 4
+weight (Word64 x) = 8
 
+regionContextUpdate :: Integer -> EBPFtype -> RegionContext -> RegionContext
+regionContextUpdate n t rc = if inBounds n == True
+                             then {-not sure how to make this case faithful to the documentation-} 
+                             else rc
 
 
 

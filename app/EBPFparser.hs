@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeSynonymInstances #-}
 module EBPFparser where
 
 import Data.Word
@@ -85,26 +86,199 @@ instance Show Opcode where
                                    ++ "\tMode Modifier: " ++ (show mo) ++ "\n"
                                    ++ "}\n"
 
-data Register = R0 | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 deriving (Show, Eq)
+data Register = R0 | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 deriving (Eq)
 
-data EBPFinstruction = EBPFinstruction {
+instance Show Register where
+   show r
+      | r == R0   = "r0"
+      | r == R1   = "r1"
+      | r == R2   = "r2"
+      | r == R3   = "r3"
+      | r == R4   = "r4"
+      | r == R5   = "r5"
+      | r == R6   = "r6"
+      | r == R7   = "r7"
+      | r == R8   = "r8"
+      | r == R9   = "r9"
+      | r == R10  = "r10"
+      | otherwise = "r?"
+
+
+data PreEBPFinstruction = PreEBPFinstruction {
                          opcode :: Maybe Opcode,
-                         dest :: Maybe Register,
                          src :: Maybe Register,
+                         dest :: Maybe Register,
                          offset :: Integer,
                          immediate :: Integer
                        } deriving (Eq)
 
-instance Show EBPFinstruction where
-   show (EBPFinstruction op de sr os im) = "EBPF Instruction:\n"
+instance Show PreEBPFinstruction where
+   show (PreEBPFinstruction op sr de os im) = "EBPF Instruction:\n"
                                            ++ (show op)
                                            ++ "Additional Data {\n"
-                                           ++ "\tDestination Register: " ++ (show sr) ++ "\n"
-                                           ++ "\tSource Register: " ++ (show de) ++ "\n"
+                                           ++ "\tSource Register: " ++ (show sr) ++ "\n"
+                                           ++ "\tDestination Register: " ++ (show de) ++ "\n"
                                            ++ "\tOffset: " ++ (show os) ++ "\n"
                                            ++ "\tImmediate: " ++ (show im) ++ "\n"
                                            ++ "}\n\n"
 
+data EBPFinstruction = EBPFinstruction {
+                        operationCode :: Opcode,
+                        sourceReg :: Register,
+                        destinationReg :: Register,
+                        offsetVal :: Integer,
+                        immediateVal :: Integer
+                      } | EmptyInstruction deriving (Eq)
+
+instance Show EBPFinstruction where
+   show (EBPFinstruction (ArithmeticJumpOpcode ic so co) sr de os im)
+      | ic == Just BPF_ALU   && so == Just BPF_X       = (show de) 
+                                                         ++ " " 
+                                                         ++ (getOperation co) 
+                                                         ++ " (u32)" 
+                                                         ++ (show sr) 
+                                                         ++ ";\n"
+      | ic == Just BPF_ALU64 && so == Just BPF_X       = (show de) 
+                                                         ++ " " 
+                                                         ++ (getOperation co) 
+                                                         ++ " " 
+                                                         ++ (show sr) 
+                                                         ++ ";\n"
+      | ic == Just BPF_ALU   && so == Just BPF_K       = (show de) 
+                                                         ++ " " 
+                                                         ++ (getOperation co) 
+                                                         ++ " (u32)" 
+                                                         ++ (show im) 
+                                                         ++ ";\n"
+      | ic == Just BPF_ALU64 && so == Just BPF_K       = (show de) 
+                                                         ++ " " 
+                                                         ++ (getOperation co) 
+                                                         ++ " " 
+                                                         ++ (show im) 
+                                                         ++ ";\n"
+      | ic == Just BPF_JMP32 && co /= Just BPF_CALL    = "if "
+                                                         ++ (show de)
+                                                         ++ " "
+                                                         ++ (getComparison co)
+                                                         ++ " "
+                                                         ++ (show sr)
+                                                         ++ " goto PC+"
+                                                         ++ (show os)
+                                                         ++ ";\n"
+      | ic == Just BPF_JMP32 && co == Just BPF_CALL    = "call "
+                                                         ++ (show im)
+                                                         ++ ";\n"
+      | ic == Just BPF_JMP   && (notSpecial co)        = "if "
+                                                         ++ (show de)
+                                                         ++ " "
+                                                         ++ (getComparison co)
+                                                         ++ " "
+                                                         ++ (show sr)
+                                                         ++ " goto PC+"
+                                                         ++ (show os)
+                                                         ++ ";\n"
+      | ic == Just BPF_JMP   && co == Just BPF_EXIT    = "exit;\n"
+      | ic == Just BPF_JMP   && co == Just BPF_JA      = "jmp "
+                                                         ++ "PC+"
+                                                         ++ (show os)
+                                                         ++ ";\n"
+      | otherwise                                      = "Non-Standard Arithmetic/Jump Instruction;\n" 
+      where
+         getOperation = (\x -> if x /= Nothing 
+                               then if (lookupOperation $ (\(Just y) -> y) x) /= Nothing 
+                                    then (\(Just y) -> y) $ lookupOperation  $ (\(Just y) -> y) x 
+                                    else "" 
+                               else ""
+                        )
+         lookupOperation = (\x -> lookup x operationStringMap)
+         notSpecial = (\x -> x /= Just BPF_EXIT || x /= Just BPF_JA)
+         getComparison =  (\x -> if x /= Nothing 
+                                 then if (lookupComparison $ (\(Just y) -> y) x) /= Nothing
+                                      then (\(Just y) -> y) $ lookupComparison $ (\(Just y) -> y) x
+                                      else "" 
+                                 else ""
+                          )
+         lookupComparison = (\x -> lookup x comparisonStringMap)
+   show (EBPFinstruction (LoadStoreOpcode ic si mo) sr de os im)
+      | ic == Just BPF_LDX   = (show de) 
+                               ++ " = (*" 
+                               ++ (getSize si) 
+                               ++ " *) (" 
+                               ++ (show sr) 
+                               ++ " + " 
+                               ++ (show os) 
+                               ++ ");\n" 
+      | ic == Just BPF_LD    = "Non-Standard Load;\n"
+      | ic == Just BPF_STX   = "(*"
+                               ++ (getSize si)
+                               ++ "*) ("
+                               ++ (show de)
+                               ++ " + "
+                               ++ (show os)
+                               ++ ") = "
+                               ++ (show sr)
+                               ++ ";\n"
+      | ic == Just BPF_ST    = "(*"
+                               ++ (getSize si)
+                               ++ "*) ("
+                               ++ (show de)
+                               ++ " + "
+                               ++ (show os)
+                               ++ ") = "
+                               ++ (show im)
+                               ++ ";\n"
+      | otherwise       = "Non-Standard Load/Store Operation;\n"
+      where
+         getSize =  (\x -> if x /= Nothing
+                           then if (lookupSize $ (\(Just y) -> y) x) /= Nothing 
+                                then (\(Just y) -> y) $ lookupSize $ (\(Just y) -> y) x  
+                                else ""
+                           else ""
+                    )
+         lookupSize = (\x -> lookup x sizeStringMap)
+   show EmptyInstruction = "Empty Instruction;\n" 
+
+data EBPFsection = EBPFsection {title :: String, instructions :: [EBPFinstruction]}
+
+instance Show EBPFsection where
+   show (EBPFsection t i) = (showTitle t) ++ (showInstructions i) where
+      showTitle = (\x -> x ++ ":\n")
+      showInstructions = (\x -> foldl (++) "" (fmap (\y -> "   " ++ (show y)) x))
+                   
+operationStringMap = [(BPF_ADD, "+=")
+    , (BPF_SUB, "-=")
+    , (BPF_MUL, "*=")
+    , (BPF_DIV, "/=")
+    , (BPF_OR, "|=")
+    , (BPF_AND, "&=")
+    , (BPF_LSH, "<<=")
+    , (BPF_RSH, ">>=")
+    , (BPF_NEG, "=~")
+    , (BPF_MOD, "%=")
+    , (BPF_XOR, "^=")
+    , (BPF_MOV, "=")
+    , (BPF_ARSH, "sign extending shift right")
+    , (BPF_END, "endianness conversion")
+    ]
+
+comparisonStringMap = [(BPF_JEQ, "==")
+    , (BPF_JGT, ">")
+    , (BPF_JGE, ">=")
+    , (BPF_JSET, "&")
+    , (BPF_JNE, "!=")
+    , (BPF_JSGT, ">")
+    , (BPF_JSGE, ">=")
+    , (BPF_JLT, "<")
+    , (BPF_JLE, "<=")
+    , (BPF_JSLT, "<")
+    , (BPF_JSLE, "<=")
+    ]
+
+sizeStringMap = [(BPF_W, "u32")
+    , (BPF_H, "u16")
+    , (BPF_B, "u8")
+    , (BPF_DW, "u64")
+    ]
 
 classHexMap = [ (0x00, BPF_LD)
     , (0x01, BPF_LDX)
@@ -188,8 +362,16 @@ registerHexMap =
     , (0x0a, R10)
     ]
 
-parseEBPF :: Word64 -> EBPFinstruction
-parseEBPF inst = EBPFinstruction (getOpcode inst) (getDest inst) (getSrc inst) (getOffset inst) (getImmediate inst)
+
+validateEBPF :: PreEBPFinstruction -> EBPFinstruction
+validateEBPF (PreEBPFinstruction op de sr os im)
+   | op /= Nothing && de /= Nothing && sr /= Nothing  = (EBPFinstruction (unjust op) (unjust sr) (unjust de) os im)
+   | otherwise                                        = EmptyInstruction
+   where
+      unjust = (\(Just y) -> y)
+
+parseEBPF :: Word64 -> PreEBPFinstruction
+parseEBPF inst = PreEBPFinstruction (getOpcode inst) (getDest inst) (getSrc inst) (getOffset inst) (getImmediate inst)
    where
       getOpcode :: Word64 -> Maybe Opcode
       getOpcode n0
@@ -233,7 +415,7 @@ parseEBPF inst = EBPFinstruction (getOpcode inst) (getDest inst) (getSrc inst) (
       opBitmask :: Word64
       opBitmask = 0xF `shiftL` 4
       sizeBitmask :: Word64
-      sizeBitmask = 0x4 `shiftL` 3
+      sizeBitmask = 0x3 `shiftL` 3
       modeBitmask :: Word64
       modeBitmask = 0x7 `shiftL` 5
       destBitmask :: Word64
