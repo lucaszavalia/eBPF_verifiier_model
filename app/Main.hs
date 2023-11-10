@@ -31,16 +31,18 @@ main = putStrLn "Welcome to the EBPF verifier model!" >>
       )
    )
    where
-      parseInstructions :: [(String, [DW.Word64])] -> [EBPFsection]
-      parseInstructions = (\x -> fmap (\(a,b) -> EBPFsection a (fmap (\y -> validateEBPF $ parseEBPF y) b)) x)
-      mapSection64 :: ELF.Elf -> [(String, [DW.Word64])]
-      mapSection64 = (\x -> fmap (\y -> (getName y, getSection64 y)) (filterSections $ ELF.elfSections x))
+      parseInstructions :: [(String, DW.Word64, [DW.Word64])] -> [EBPFsection]
+      parseInstructions = (\x -> fmap (\(a,n,b) -> EBPFsection a n (fmap (\y -> validateEBPF $ parseEBPF y) b)) x)
+      mapSection64 :: ELF.Elf -> [(String, DW.Word64, [DW.Word64])]
+      mapSection64 = (\x -> fmap (\y -> (getName y, getStart y, getSection64 y)) (filterSections $ ELF.elfSections x))
       filterSections :: [ELF.ElfSection] -> [ELF.ElfSection]
       filterSections = (\x -> filter (\y -> ELF.elfSectionType y == ELF.SHT_PROGBITS) x)
       getSection64 :: ELF.ElfSection -> [DW.Word64]
       getSection64 = (\x -> splitBytes $ BS.unpack $ ELF.elfSectionData x)
       getName :: ELF.ElfSection -> String
       getName = ELF.elfSectionName
+      getStart :: ELF.ElfSection -> DW.Word64
+      getStart = ELF.elfSectionAddr
       splitBytes :: [DW.Word8] -> [DW.Word64]
       splitBytes = (\x -> toWord64 $ fromWord8toBS $ groupBy8 $ adjustListLength x)
       adjustListLength :: [DW.Word8] -> [DW.Word8]

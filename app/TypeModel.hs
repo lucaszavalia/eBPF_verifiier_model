@@ -22,6 +22,9 @@ type Triplet = (Name, EBPFtype, Int)
 type RegionStructure = [Triplet]
 type Region = (RegionType, Int, Int, RegionStructure)
 type RegionContext = [Region]
+type Simulation = (TypeContext, RegionContext, [EBPFinstruction])
+type Instant = (TypeContext, RegionContext, EBPFinstruction)
+type Judgement = (EBPFinstruction, EBPFtype)
 
 instance Eq Cell where
    (==) x y = (fst x == fst y) && (snd x == snd y)
@@ -54,18 +57,76 @@ typeContextUpdate na ty tc
          | otherwise = (n,t):(removeName tc')
 
 typeContextUnion :: TypeContext -> TypeContext -> TypeContext
-typeContextUnion = \tc1 tc2 -> tc1 `union` tc2
+typeContextUnion = (\tc1 tc2 -> tc1 `union` tc2)
+
+(:::) :: Name -> EBPFtype -> Cell
+(:::) = (\a, b -> (a,b))
+infixl 7 (:::)
+
+(|-) :: TypeContext -> Cell -> Bool
+(|-) = (\x, y -> x `elem` y) 
+infixl 6 (|-)
+
+(:-) :: TypeContext -> Name -> EBPFtype
+(:-) = (\x, y -> if lookup y x == Nothing then EBPFempty else (\(Just z) -> z) $ lookup y x)
+
+(-:) :: TypeContext -> Cell -> TypeContext 
+(-:) = (\x, (Cell a b) -> typeContextUpdate a b x)
 
 weight :: EBPFtype -> Integer
-weight (Word8 x) = 1
-weight (Word16 x) = 2
-weight (Word32 x) = 4
-weight (Word64 x) = 8
+   weight typ
+      | (Word8 typ)     = 1
+      | (Word16 typ)    = 2
+      | (Word32 typ)    = 4
+      | (Word64 typ)    = 8
+      | otherwise       = 8
 
-regionContextUpdate :: Integer -> EBPFtype -> RegionContext -> RegionContext
-regionContextUpdate n t rc = if inBounds n == True
-                             then {-not sure how to make this case faithful to the documentation-} 
-                             else rc
+regionContextUpdate :: String -> EBPFtype -> Integer -> RegionConext -> RegionContext
+regionContextUpdate = (\v, tau, n, delta -> 
+   fmap (\(Region a b c d) ->
+      if a == StackType 
+         then Region a b c (stackUpdate d)
+         else Region a b c d)
+   delta)
+   where
+      stackUpdate :: String -> EBPFtype -> Integer -> Region -> Region
+      stackUpdate v tau n stk = if inBounds tau n stk == True
+         then if hasOverlap tau n stk == True
+            then updateOverlap v tau n stk (overlapSet v tau n stk)
+            else updateNoOverlap v tau n stk
+         else stk
+      inBounds :: EBPFtype -> Integer -> Region -> Bool
+      inBounds = (\x, y, (Region a b c d) -> if y + c <= y + c + weight(y) <= y then True else False)
+      hasOverlap :: EBPFtype -> Integer -> Region -> Bool
+      hasOverlap = (\x, y, z -> (inTripletBounds y z) || (inTripletBounds (y + weight(x))))
+      inTripletBounds :: Integer -> Region -> Bool
+      inTripletBounds = (\j, k -> foldl (&&) True (fmap (\w -> j `elem` w (getTripletBounds k))))
+      getTripletBounds :: Region -> [[Int]]
+      getTripletBounds = (\(Region a b c d) -> fmap (\(Triplet v tau i) -> [i..(i + weight(tau))]) d)
+      updateOverlap :: EBPFtype -> Integer -> Region -> Regionstructure -> Region
+      updateOverlap = (\v, tau, n, oset, (Region a b c d) -> Region a b c d ((d \\ oset) `union` [(Triplet v tau n)]))
+      overlapSet :: String -> EBPFtype -> Integer -> Region -> RegionStructure
+      overlapSet = (\v, tau, n, (Region a b c d) -> fixTriplets $ filterTriplets tau n (expandTripletBounds d))
+      expandTripletBounds :: RegionStructure -> [(Name, EBPFtype, [Int])]
+      expandTripletBounds = (\d -> fmap (\(Triplet v tau i) -> (v, tau, [i..(weight(tau)+i)])) d)
+      filterTriplets :: EBPFtype -> Integer -> [(Name, EBPFtype, [Int])] -> [(Name, EBPFtype, [Int])]
+      filterTriplets = (\tau, n, trips -> filter (\(a, b, c) -> c `intersect` [n..(n+weight(tau))]) trips)
+      fixTriplets :: [(Name, EBPFtype, [Int])] -> RegionStructure
+      fixTriplets = (\x -> fmap (\(a, b, c) -> (a, b, (head c))) x)
+      updateNoOverlap String -> EBPFtype -> Integer -> Region -> Region
+      updateNoOverlap = (\v, tau, n, (Region a b c d) -> Region a b c (d `union` [(Triplet v tau n)]))
 
+--type checking
+ebpfRegionContextInit :: RegionContext
+ebpfRegionContextInit = [ (Region StackType 512 0 []) ] --figure out where to context begin and end
 
+ebpfTypeContextInit :: TypeContext
+ebpfTypeContextInit = [ ("r1", (EBPFptr EBPFcontext 0)), ("r10", (EBPFptr EBPFstack 0)) ]
 
+{-typeCheck :: Simulation -> [Judgement]  
+typeCheck (g,d,[]) = []
+typeCheck (g,d,i) = (analyzeInstant (g,d,(head i))):(typeCheck (g,d,(tail i)))
+   where
+      analyzeInstant :: Instant -> Judgement
+      analyzeInstant (gamma, delta, (EBPFinstruction (ArithmeticJumpOpcode ic so co) sr de os im))
+         | co == BPF_MOV && so == BPF_X   =  -}

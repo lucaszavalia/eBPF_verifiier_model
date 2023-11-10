@@ -201,7 +201,7 @@ instance Show EBPFinstruction where
          lookupComparison = (\x -> lookup x comparisonStringMap)
    show (EBPFinstruction (LoadStoreOpcode ic si mo) sr de os im)
       | ic == Just BPF_LDX   = (show de) 
-                               ++ " = (*" 
+                               ++ " = *(" 
                                ++ (getSize si) 
                                ++ " *) (" 
                                ++ (show sr) 
@@ -209,7 +209,7 @@ instance Show EBPFinstruction where
                                ++ (show os) 
                                ++ ");\n" 
       | ic == Just BPF_LD    = "Non-Standard Load;\n"
-      | ic == Just BPF_STX   = "(*"
+      | ic == Just BPF_STX   = "*("
                                ++ (getSize si)
                                ++ "*) ("
                                ++ (show de)
@@ -218,7 +218,7 @@ instance Show EBPFinstruction where
                                ++ ") = "
                                ++ (show sr)
                                ++ ";\n"
-      | ic == Just BPF_ST    = "(*"
+      | ic == Just BPF_ST    = "*("
                                ++ (getSize si)
                                ++ "*) ("
                                ++ (show de)
@@ -238,10 +238,11 @@ instance Show EBPFinstruction where
          lookupSize = (\x -> lookup x sizeStringMap)
    show EmptyInstruction = "Empty Instruction;\n" 
 
-data EBPFsection = EBPFsection {title :: String, instructions :: [EBPFinstruction]}
+data EBPFsection = EBPFsection {title :: String, start :: Word64, instructions :: [EBPFinstruction]}
 
 instance Show EBPFsection where
-   show (EBPFsection t i) = (showTitle t) ++ (showInstructions i) where
+   show (EBPFsection t a i) = (showStart a) ++ (showTitle t) ++ (showInstructions i) where
+      showStart = (\x -> "Start Address: " ++ (show x) ++ "\n")
       showTitle = (\x -> x ++ ":\n")
       showInstructions = (\x -> foldl (++) "" (fmap (\y -> "   " ++ (show y)) x))
                    
@@ -362,6 +363,25 @@ registerHexMap =
     , (0x0a, R10)
     ]
 
+isLoad :: EBPFinstruction -> Bool
+isLoad
+   | (EBPFinstruction (LoadStoreOpcode ic si mo) sr de os im)  = ic `elem` loadClass
+   | otherwise                                                 = False
+
+isStore :: EBPFinstruction -> Bool
+isStore
+   | (EBPFinstruction (LoadStoreOpcode ic si mo) sr de os im)  = ic `elem` storeClass
+   | otherwise                                                 = False
+
+isAssign :: EBPFinstruction -> Bool
+isAssign
+   | (EBPFinstruction (ArithmeticJumpOpcode ic so co) sr de os im)   = (co == BPF_MOV && so == BPF_X)
+   | otherwise                                                       = False
+
+isAssignImmediate :: EBPFinstruction -> Bool
+isAssignImmediate
+   | (EBPFinstruction (ArithmeticJumpOpcode ic so co) sr de os im)   = (co == BPF_MOV && so == BPF_K)
+   | otherwise                                                       = False
 
 validateEBPF :: PreEBPFinstruction -> EBPFinstruction
 validateEBPF (PreEBPFinstruction op de sr os im)
@@ -371,14 +391,14 @@ validateEBPF (PreEBPFinstruction op de sr os im)
       unjust = (\(Just y) -> y)
 
 parseEBPF :: Word64 -> PreEBPFinstruction
-parseEBPF inst = PreEBPFinstruction (getOpcode inst) (getDest inst) (getSrc inst) (getOffset inst) (getImmediate inst)
+parseEBPF inst = PreEBPFinstruction (getOpcode inst) (getSrc inst) (getDest inst) (getOffset inst) (getImmediate inst)
    where
       getOpcode :: Word64 -> Maybe Opcode
       getOpcode n0
-         | (isLoad $ getClass n0) == True          = Just $ LoadStoreOpcode (getClass n0) (getSize n0) (getMode n0)
-         | (isStore $ getClass n0) == True         = Just $ LoadStoreOpcode (getClass n0) (getSize n0) (getMode n0)
-         | (isJump $ getClass n0) == True          = Just $ ArithmeticJumpOpcode (getClass n0) (getSourceModifier n0) (getJCode n0)
-         | (isArithmetic $ getClass n0) == True    = Just $ ArithmeticJumpOpcode (getClass n0) (getSourceModifier n0) (getACode n0)
+         | (isMaybeLoad $ getClass n0) == True          = Just $ LoadStoreOpcode (getClass n0) (getSize n0) (getMode n0)
+         | (isMaybeStore $ getClass n0) == True         = Just $ LoadStoreOpcode (getClass n0) (getSize n0) (getMode n0)
+         | (isMaybeJump $ getClass n0) == True          = Just $ ArithmeticJumpOpcode (getClass n0) (getSourceModifier n0) (getJCode n0)
+         | (isMaybeArithmetic $ getClass n0) == True    = Just $ ArithmeticJumpOpcode (getClass n0) (getSourceModifier n0) (getACode n0)
          | otherwise                               = Nothing
       getClass :: Word64 -> Maybe InstructionClass
       getClass = (\x -> (lookup ((.&.) x classBitmask) classHexMap))
@@ -392,22 +412,22 @@ parseEBPF inst = PreEBPFinstruction (getOpcode inst) (getDest inst) (getSrc inst
       getSize = (\x -> (lookup ((.&.) x sizeBitmask) sizeHexMap))
       getMode :: Word64 -> Maybe ModeModifier
       getMode = (\x -> (lookup ((.&.) x modeBitmask) modeHexMap))
-      getDest :: Word64 -> Maybe Register
-      getDest = (\x -> (lookup (((.&.) x destBitmask) `shiftR` 8) registerHexMap))
       getSrc :: Word64 -> Maybe Register
-      getSrc = (\x -> (lookup (((.&.) x srcBitmask) `shiftR` 12) registerHexMap))
+      getSrc = (\x -> (lookup (((.&.) x destBitmask) `shiftR` 8) registerHexMap))
+      getDest :: Word64 -> Maybe Register
+      getDest = (\x -> (lookup (((.&.) x srcBitmask) `shiftR` 12) registerHexMap))
       getOffset :: Word64 -> Integer
       getOffset = (\x -> toInteger $ ((.&.) x offsetBitmask) `shiftR` 16)
       getImmediate :: Word64 -> Integer
       getImmediate = (\x -> toInteger $ ((.&.) x immediateBitmask) `shiftR` 32)
-      isLoad :: Maybe InstructionClass -> Bool
-      isLoad = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` loadClass else False)
-      isStore :: Maybe InstructionClass -> Bool
-      isStore = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` storeClass else False)
-      isJump :: Maybe InstructionClass -> Bool
-      isJump = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` jumpClass else False)
-      isArithmetic :: Maybe InstructionClass -> Bool
-      isArithmetic = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` arithmeticClass else False)
+      isMaybeLoad :: Maybe InstructionClass -> Bool
+      isMaybeLoad = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` loadClass else False)
+      isMaybeStore :: Maybe InstructionClass -> Bool
+      isMaybeStore = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` storeClass else False)
+      isMaybeJump :: Maybe InstructionClass -> Bool
+      isMaybeJump = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` jumpClass else False)
+      isMaybeArithmetic :: Maybe InstructionClass -> Bool
+      isMaybeArithmetic = (\x -> if x /= Nothing then ((\(Just y) -> y) x) `elem` arithmeticClass else False)
       classBitmask :: Word64
       classBitmask = 0x07
       sourceBitmask :: Word64
