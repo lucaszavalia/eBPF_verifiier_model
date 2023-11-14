@@ -10,6 +10,7 @@ import qualified Data.Elf as ELF
 import qualified Data.Word as DW
 import qualified Data.Binary.Get as BG
 import EBPFparser
+import TypeModel
 
 main :: IO ()
 main = putStrLn "Welcome to the EBPF verifier model!" >>

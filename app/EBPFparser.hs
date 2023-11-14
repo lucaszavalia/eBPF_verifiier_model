@@ -296,6 +296,11 @@ storeClass = [BPF_ST, BPF_STX]
 arithmeticClass = [BPF_ALU, BPF_ALU64]
 jumpClass = [BPF_JMP, BPF_JMP32]
 
+loadMaybeClass = [Just BPF_LD, Just BPF_LDX]
+storeMaybeClass = [Just BPF_ST, Just BPF_STX]
+arithmeticMaybeClass = [Just BPF_ALU, Just BPF_ALU64]
+jumpMaybeClass = [Just BPF_JMP, Just BPF_JMP32]
+
 sourceHexMap = [(0x00, BPF_K), (0x08, BPF_X)]
 
 arithmeticHexMap :: [(Word64, AJCode)]
@@ -364,24 +369,21 @@ registerHexMap =
     ]
 
 isLoad :: EBPFinstruction -> Bool
-isLoad
-   | (EBPFinstruction (LoadStoreOpcode ic si mo) sr de os im)  = ic `elem` loadClass
-   | otherwise                                                 = False
+isLoad (EBPFinstruction (LoadStoreOpcode ic si mo) sr de os im) = ic `elem` loadMaybeClass
+isLoad (EBPFinstruction (ArithmeticJumpOpcode ic so co) sr de os im) = False
 
 isStore :: EBPFinstruction -> Bool
-isStore
-   | (EBPFinstruction (LoadStoreOpcode ic si mo) sr de os im)  = ic `elem` storeClass
-   | otherwise                                                 = False
+isStore (EBPFinstruction (LoadStoreOpcode ic si mo) sr de os im) = ic `elem` storeMaybeClass
+isStore (EBPFinstruction (ArithmeticJumpOpcode ic so co) sr de os im) = False
 
 isAssign :: EBPFinstruction -> Bool
-isAssign
-   | (EBPFinstruction (ArithmeticJumpOpcode ic so co) sr de os im)   = (co == BPF_MOV && so == BPF_X)
-   | otherwise                                                       = False
+isAssign (EBPFinstruction (LoadStoreOpcode ic si mo) sr de os im) = False
+isAssign (EBPFinstruction (ArithmeticJumpOpcode ic so co) sr de os im)   = (co == Just BPF_MOV && so == Just BPF_X)
+
 
 isAssignImmediate :: EBPFinstruction -> Bool
-isAssignImmediate
-   | (EBPFinstruction (ArithmeticJumpOpcode ic so co) sr de os im)   = (co == BPF_MOV && so == BPF_K)
-   | otherwise                                                       = False
+isAssignImmediate (EBPFinstruction (LoadStoreOpcode ic si mo) sr de os im) = False
+isAssignImmediate (EBPFinstruction (ArithmeticJumpOpcode ic so co) sr de os im)   = (co == Just BPF_MOV && so == Just BPF_K)
 
 validateEBPF :: PreEBPFinstruction -> EBPFinstruction
 validateEBPF (PreEBPFinstruction op de sr os im)
